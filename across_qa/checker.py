@@ -87,7 +87,10 @@ def _fetch_all_schedules(
     client: Client,
     telescope_ids: list[str],
 ) -> list["sdk.Schedule"]:
-    """Fetch every schedule for the given telescope IDs via a single paginated query.
+    """Fetch schedules for the given telescope IDs via a single API call.
+
+    The API returns the most recent schedule for each date-range and status
+    combination, so no pagination is required.
 
     Parameters
     ----------
@@ -99,35 +102,20 @@ def _fetch_all_schedules(
     Returns
     -------
     list[sdk.Schedule]
-        All schedules returned by the API for those telescopes.
+        Schedules returned by the API for those telescopes.
     """
     if not telescope_ids:
         return []
 
-    all_items: list = []
-    page_num = 1
-    page_limit = 1000
+    try:
+        result = client.schedule.get_many(telescope_ids=telescope_ids)
+    except Exception:
+        logger.exception(
+            "Failed to fetch schedules for telescope_ids=%s", telescope_ids
+        )
+        return []
 
-    while True:
-        try:
-            page = client.schedule.get_many(
-                telescope_ids=telescope_ids,
-                page=page_num,
-                page_limit=page_limit,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to fetch schedules for telescope_ids=%s", telescope_ids
-            )
-            break
-
-        all_items.extend(page.items)
-        total = page.total_number or 0
-        if not page.items or len(all_items) >= total:
-            break
-        page_num += 1
-
-    return all_items
+    return result.items
 
 
 def _build_latest_lookup(
@@ -286,9 +274,9 @@ def check_all_telescopes(
 
     1. ``client.telescope.get_many()`` — retrieves all telescopes with their
        cadence configurations.
-    2. ``client.schedule.get_many(telescope_ids=[...])`` — retrieves all
-       schedules for every telescope that has at least one cadence, paginating
-       as needed.
+    2. ``client.schedule.get_many(telescope_ids=[...])`` — retrieves the most
+       recent schedule per date-range and status for every telescope that has
+       at least one cadence.
 
     The returned schedules are parsed in-memory to find the most recently
     created schedule per (telescope, status) pair before cadence evaluation.

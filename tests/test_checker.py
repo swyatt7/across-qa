@@ -196,10 +196,9 @@ def _make_schedule(created_on: datetime, telescope_id: str = "t1", status: str =
     return sched
 
 
-def _make_page(schedules: list, total_number: int | None = None) -> MagicMock:
+def _make_page(schedules: list) -> MagicMock:
     page = MagicMock()
     page.items = schedules
-    page.total_number = total_number if total_number is not None else len(schedules)
     return page
 
 
@@ -236,9 +235,7 @@ class TestCheckAllTelescopes:
                 s.status = status_val
             all_schedules.extend(scheds)
 
-        client.schedule.get_many.return_value = _make_page(
-            all_schedules, total_number=len(all_schedules)
-        )
+        client.schedule.get_many.return_value = _make_page(all_schedules)
         return client
 
     def test_ok_telescope(self):
