@@ -180,9 +180,11 @@ def _make_telescope(
     name: str,
     tid: str,
     cadences: list | None = None,
+    short_name: str | None = None,
 ) -> MagicMock:
     tele = MagicMock()
     tele.name = name
+    tele.short_name = short_name if short_name is not None else name
     tele.id = tid
     tele.schedule_cadences = cadences or []
     return tele

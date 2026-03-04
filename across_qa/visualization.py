@@ -70,7 +70,9 @@ def plot_timeline(
     df = df.copy()
 
     # Build a human-readable Y-axis label per row.
-    df["label"] = df["telescope_name"] + " (" + df["schedule_status"] + ")"
+    # Use short_name when available, falling back to telescope_name.
+    name_col = "telescope_short_name" if "telescope_short_name" in df.columns else "telescope_name"
+    df["label"] = df[name_col] + " (" + df["schedule_status"] + ")"
 
     # Ensure datetime columns are tz-aware so Plotly renders them correctly.
     for col in ("last_ingested", "next_expected"):

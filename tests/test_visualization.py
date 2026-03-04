@@ -33,6 +33,7 @@ def _make_df(*rows: dict) -> pd.DataFrame:
     """Build a minimal DataFrame mirroring check_all_telescopes() output."""
     columns = [
         "telescope_name",
+        "telescope_short_name",
         "telescope_id",
         "schedule_status",
         "cron",
@@ -57,7 +58,8 @@ class TestPlotTimeline:
 
         df = _make_df(
             {
-                "telescope_name": "Swift",
+                "telescope_name": "Neil Gehrels Swift Observatory",
+                "telescope_short_name": "Swift",
                 "telescope_id": "t1",
                 "schedule_status": "planned",
                 "cron": "0 * * * *",
@@ -76,8 +78,9 @@ class TestPlotTimeline:
 
         df = pd.DataFrame(
             columns=[
-                "telescope_name", "telescope_id", "schedule_status",
-                "cron", "last_ingested", "next_expected", "status", "message",
+                "telescope_name", "telescope_short_name", "telescope_id",
+                "schedule_status", "cron", "last_ingested", "next_expected",
+                "status", "message",
             ]
         )
         fig = plot_timeline(df)
@@ -87,7 +90,8 @@ class TestPlotTimeline:
         """Each status value present in the data produces at least one named trace."""
         df = _make_df(
             {
-                "telescope_name": "Swift",
+                "telescope_name": "Neil Gehrels Swift Observatory",
+                "telescope_short_name": "Swift",
                 "telescope_id": "t1",
                 "schedule_status": "planned",
                 "cron": "0 * * * *",
@@ -97,7 +101,8 @@ class TestPlotTimeline:
                 "message": "OK",
             },
             {
-                "telescope_name": "Chandra",
+                "telescope_name": "Chandra X-ray Observatory",
+                "telescope_short_name": "Chandra",
                 "telescope_id": "t2",
                 "schedule_status": "planned",
                 "cron": "0 * * * *",
@@ -107,7 +112,8 @@ class TestPlotTimeline:
                 "message": "Late.",
             },
             {
-                "telescope_name": "Fermi",
+                "telescope_name": "Fermi Gamma-ray Space Telescope",
+                "telescope_short_name": "Fermi",
                 "telescope_id": "t3",
                 "schedule_status": "planned",
                 "cron": "0 * * * *",
@@ -117,7 +123,8 @@ class TestPlotTimeline:
                 "message": "Missing.",
             },
             {
-                "telescope_name": "Hubble",
+                "telescope_name": "Hubble Space Telescope",
+                "telescope_short_name": "Hubble",
                 "telescope_id": "t4",
                 "schedule_status": "",
                 "cron": None,
@@ -137,7 +144,8 @@ class TestPlotTimeline:
         """Marker colours in traces must match the spec colours."""
         df = _make_df(
             {
-                "telescope_name": "Swift",
+                "telescope_name": "Neil Gehrels Swift Observatory",
+                "telescope_short_name": "Swift",
                 "telescope_id": "t1",
                 "schedule_status": "planned",
                 "cron": "0 * * * *",
@@ -155,7 +163,8 @@ class TestPlotTimeline:
         """When output_path is provided, an HTML file is created."""
         df = _make_df(
             {
-                "telescope_name": "Swift",
+                "telescope_name": "Neil Gehrels Swift Observatory",
+                "telescope_short_name": "Swift",
                 "telescope_id": "t1",
                 "schedule_status": "planned",
                 "cron": "0 * * * *",
@@ -176,7 +185,8 @@ class TestPlotTimeline:
         """MISSING rows (last_ingested=None) should not raise."""
         df = _make_df(
             {
-                "telescope_name": "Fermi",
+                "telescope_name": "Fermi Gamma-ray Space Telescope",
+                "telescope_short_name": "Fermi",
                 "telescope_id": "t3",
                 "schedule_status": "planned",
                 "cron": "0 * * * *",
@@ -195,7 +205,8 @@ class TestPlotTimeline:
         """The X axis should be of type 'date' (time on the X axis)."""
         df = _make_df(
             {
-                "telescope_name": "Swift",
+                "telescope_name": "Neil Gehrels Swift Observatory",
+                "telescope_short_name": "Swift",
                 "telescope_id": "t1",
                 "schedule_status": "planned",
                 "cron": "0 * * * *",
@@ -207,6 +218,27 @@ class TestPlotTimeline:
         )
         fig = plot_timeline(df)
         assert fig.layout.xaxis.type == "date"
+
+    def test_short_name_used_as_y_axis_label(self):
+        """Y-axis labels should use telescope_short_name, not the full name."""
+        df = _make_df(
+            {
+                "telescope_name": "Neil Gehrels Swift Observatory",
+                "telescope_short_name": "Swift",
+                "telescope_id": "t1",
+                "schedule_status": "planned",
+                "cron": "0 * * * *",
+                "last_ingested": LAST_30MIN_AGO,
+                "next_expected": NEXT_30MIN,
+                "status": "OK",
+                "message": "OK",
+            }
+        )
+        fig = plot_timeline(df)
+        ok_trace = next(t for t in fig.data if t.name == "OK")
+        y_labels = list(ok_trace.y)
+        assert any("Swift" in str(lbl) for lbl in y_labels)
+        assert not any("Neil Gehrels" in str(lbl) for lbl in y_labels)
 
     def test_all_statuses_covered_in_color_map(self):
         """_STATUS_COLORS must define a colour for every member of _STATUS_ORDER."""

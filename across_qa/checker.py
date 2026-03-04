@@ -47,6 +47,7 @@ class CadenceResult:
     """Result of a single telescope / cadence check."""
 
     telescope_name: str
+    telescope_short_name: str
     telescope_id: str
     schedule_status: str
     cron: str | None
@@ -139,6 +140,7 @@ def check_cadence(
     schedule_status: str,
     last_ingested: datetime | None,
     now: datetime | None = None,
+    telescope_short_name: str | None = None,
 ) -> CadenceResult:
     """Evaluate whether schedule ingestion is on schedule.
 
@@ -159,6 +161,9 @@ def check_cadence(
     now:
         Current UTC time used as the reference point.  Defaults to the real
         current UTC time; injectable for deterministic testing.
+    telescope_short_name:
+        Abbreviated telescope name used for display purposes.  Defaults to
+        ``telescope_name`` when not provided.
 
     Returns
     -------
@@ -167,12 +172,15 @@ def check_cadence(
     if now is None:
         now = _now_utc()
 
+    short_name = telescope_short_name or telescope_name
+
     # ------------------------------------------------------------------ #
     # No cadence configured
     # ------------------------------------------------------------------ #
     if not cron:
         return CadenceResult(
             telescope_name=telescope_name,
+            telescope_short_name=short_name,
             telescope_id=telescope_id,
             schedule_status=schedule_status,
             cron=cron,
@@ -188,6 +196,7 @@ def check_cadence(
     if last_ingested is None:
         return CadenceResult(
             telescope_name=telescope_name,
+            telescope_short_name=short_name,
             telescope_id=telescope_id,
             schedule_status=schedule_status,
             cron=cron,
@@ -213,6 +222,7 @@ def check_cadence(
         logger.exception("Failed to parse cron expression %r", cron)
         return CadenceResult(
             telescope_name=telescope_name,
+            telescope_short_name=short_name,
             telescope_id=telescope_id,
             schedule_status=schedule_status,
             cron=cron,
@@ -225,6 +235,7 @@ def check_cadence(
     if now >= next_expected:
         return CadenceResult(
             telescope_name=telescope_name,
+            telescope_short_name=short_name,
             telescope_id=telescope_id,
             schedule_status=schedule_status,
             cron=cron,
@@ -239,6 +250,7 @@ def check_cadence(
 
     return CadenceResult(
         telescope_name=telescope_name,
+        telescope_short_name=short_name,
         telescope_id=telescope_id,
         schedule_status=schedule_status,
         cron=cron,
@@ -254,6 +266,7 @@ def check_cadence(
 
 _RESULT_COLUMNS = [
     "telescope_name",
+    "telescope_short_name",
     "telescope_id",
     "schedule_status",
     "cron",
@@ -333,6 +346,7 @@ def check_all_telescopes(
             rows.append(
                 CadenceResult(
                     telescope_name=telescope.name,
+                    telescope_short_name=telescope.short_name,
                     telescope_id=telescope.id,
                     schedule_status="",
                     cron=None,
@@ -355,6 +369,7 @@ def check_all_telescopes(
                 schedule_status=status_val,
                 last_ingested=last_ingested,
                 now=now,
+                telescope_short_name=telescope.short_name,
             )
             rows.append(result)
             logger.debug("Checked %s: %s", telescope.name, result)
