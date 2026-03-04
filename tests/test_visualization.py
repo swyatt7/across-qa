@@ -191,8 +191,8 @@ class TestPlotTimeline:
         fig = plot_timeline(df)
         assert isinstance(fig, go.Figure)
 
-    def test_figure_has_yaxis_type_date(self):
-        """The Y axis should be of type 'date'."""
+    def test_figure_has_xaxis_type_date(self):
+        """The X axis should be of type 'date' (time on the X axis)."""
         df = _make_df(
             {
                 "telescope_name": "Swift",
@@ -206,7 +206,7 @@ class TestPlotTimeline:
             }
         )
         fig = plot_timeline(df)
-        assert fig.layout.yaxis.type == "date"
+        assert fig.layout.xaxis.type == "date"
 
     def test_all_statuses_covered_in_color_map(self):
         """_STATUS_COLORS must define a colour for every member of _STATUS_ORDER."""

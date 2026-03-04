@@ -1,6 +1,6 @@
 """Plotly timeline visualization for across-qa schedule status.
 
-Creates an interactive HTML timeline where the Y axis shows time and each
+Creates an interactive HTML timeline where the X axis shows time and each
 telescope / schedule-status combination is plotted as a marker coloured by
 its ingestion health:
 
@@ -69,8 +69,8 @@ def plot_timeline(
 
     df = df.copy()
 
-    # Build a human-readable X-axis label per row.
-    df["label"] = df["telescope_name"] + "\n(" + df["schedule_status"] + ")"
+    # Build a human-readable Y-axis label per row.
+    df["label"] = df["telescope_name"] + " (" + df["schedule_status"] + ")"
 
     # Ensure datetime columns are tz-aware so Plotly renders them correctly.
     for col in ("last_ingested", "next_expected"):
@@ -94,7 +94,7 @@ def plot_timeline(
         # --- last_ingested markers ------------------------------------ #
         # Rows without a last_ingested time still appear — placed at `now`
         # with a special hover note so they are visible on the chart.
-        y_last = subset["last_ingested"].where(
+        x_last = subset["last_ingested"].where(
             subset["last_ingested"].notna(), other=now
         )
         hover_last = subset.apply(
@@ -110,8 +110,8 @@ def plot_timeline(
 
         fig.add_trace(
             go.Scatter(
-                x=subset["label"],
-                y=y_last,
+                x=x_last,
+                y=subset["label"],
                 mode="markers",
                 name=status,
                 legendgroup=status,
@@ -123,30 +123,30 @@ def plot_timeline(
         )
 
         # --- connector lines to next_expected ------------------------- #
-        # Draw a thin vertical line from last_ingested → next_expected so
+        # Draw a thin horizontal line from last_ingested → next_expected so
         # the viewer can see how far ahead (or behind) each schedule is.
         has_next = subset[subset["next_expected"].notna()]
         if not has_next.empty:
-            y_next = has_next["next_expected"].where(
+            x_next = has_next["next_expected"].where(
                 has_next["next_expected"].notna(), other=now
             )
             # Add the next_expected markers in a faded version of the same colour.
             fig.add_trace(
                 go.Scatter(
-                    x=has_next["label"],
-                    y=y_next,
+                    x=x_next,
+                    y=has_next["label"],
                     mode="markers",
                     name=f"{status} (next expected)",
                     legendgroup=status,
                     marker=dict(
                         color=color,
                         size=10,
-                        symbol="triangle-up",
+                        symbol="triangle-right",
                         opacity=0.5,
                         line=dict(width=1, color="white"),
                     ),
                     hovertemplate=(
-                        "<b>%{x}</b><br>Next expected: %{y}<extra></extra>"
+                        "<b>%{y}</b><br>Next expected: %{x}<extra></extra>"
                     ),
                     showlegend=False,
                 )
@@ -161,36 +161,37 @@ def plot_timeline(
                     type="line",
                     xref="x",
                     yref="y",
-                    x0=row["label"],
-                    x1=row["label"],
-                    y0=li,
-                    y1=ne,
+                    x0=li,
+                    x1=ne,
+                    y0=row["label"],
+                    y1=row["label"],
                     line=dict(color=color, width=2, dash="dot"),
                 )
 
     # ------------------------------------------------------------------ #
-    # "Now" reference line — use add_shape + add_annotation to avoid a
-    # Plotly 6 bug where add_hline fails on datetime axes with annotations.
+    # "Now" reference line — vertical line on the time (X) axis.
+    # Use add_shape + add_annotation to avoid a Plotly 6 bug where
+    # add_vline fails on datetime axes with annotations.
     # ------------------------------------------------------------------ #
     now_iso = now.isoformat()
     fig.add_shape(
         type="line",
-        xref="paper",
-        yref="y",
-        x0=0,
-        x1=1,
-        y0=now_iso,
-        y1=now_iso,
+        xref="x",
+        yref="paper",
+        x0=now_iso,
+        x1=now_iso,
+        y0=0,
+        y1=1,
         line=dict(color="royalblue", width=2, dash="dash"),
     )
     fig.add_annotation(
-        xref="paper",
-        yref="y",
-        x=1,
-        y=now_iso,
+        xref="x",
+        yref="paper",
+        x=now_iso,
+        y=1,
         text=f"now ({now.strftime('%Y-%m-%dT%H:%M:%SZ')})",
         showarrow=False,
-        xanchor="right",
+        xanchor="left",
         yanchor="bottom",
         font=dict(color="royalblue"),
     )
@@ -200,8 +201,8 @@ def plot_timeline(
     # ------------------------------------------------------------------ #
     fig.update_layout(
         title="Telescope Schedule Ingestion Status",
-        xaxis=dict(title="Telescope (schedule status)", tickangle=-30),
-        yaxis=dict(title="Time (UTC)", type="date"),
+        xaxis=dict(title="Time (UTC)", type="date"),
+        yaxis=dict(title="Telescope (schedule status)"),
         legend=dict(title="Ingestion Status", traceorder="normal"),
         hovermode="closest",
         template="plotly_white",
