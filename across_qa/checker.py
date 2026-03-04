@@ -126,6 +126,8 @@ def _build_latest_lookup(
     latest: dict[tuple[str, str], "sdk.Schedule"] = {}
     for sched in schedules:
         status_val = _status_value(sched.status)
+        if status_val == "scheduled":
+            status_val = "planned"
         key = (sched.telescope_id, status_val)
         existing = latest.get(key)
         if existing is None or sched.created_on > existing.created_on:
