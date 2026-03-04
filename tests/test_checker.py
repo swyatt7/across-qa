@@ -188,15 +188,18 @@ def _make_telescope(
     return tele
 
 
-def _make_schedule(created_on: datetime) -> MagicMock:
+def _make_schedule(created_on: datetime, telescope_id: str = "t1", status: str = "planned") -> MagicMock:
     sched = MagicMock()
     sched.created_on = created_on
+    sched.telescope_id = telescope_id
+    sched.status = status
     return sched
 
 
-def _make_page(schedules: list) -> MagicMock:
+def _make_page(schedules: list, total_number: int | None = None) -> MagicMock:
     page = MagicMock()
     page.items = schedules
+    page.total_number = total_number if total_number is not None else len(schedules)
     return page
 
 
@@ -216,26 +219,33 @@ class TestCheckAllTelescopes:
             List of mock telescope objects.
         schedule_map:
             Dict mapping ``(telescope_id, status)`` → ``list[mock_schedule]``.
+            All schedules are returned together in a single bulk call, matching
+            the two-query pattern used by :func:`check_all_telescopes`.
         """
         client = MagicMock()
         client.telescope.get_many.return_value = telescopes
 
         schedule_map = schedule_map or {}
 
-        def _get_many(telescope_ids=None, status=None, page=None, page_limit=None):
-            status_val = status.value if hasattr(status, "value") else str(status)
-            key = (telescope_ids[0] if telescope_ids else None, status_val)
-            items = schedule_map.get(key, [])
-            return _make_page(items)
+        # Collect every schedule from the map; set telescope_id and status on
+        # each mock so the checker can build its (telescope_id, status) lookup.
+        all_schedules = []
+        for (tid, status_val), scheds in schedule_map.items():
+            for s in scheds:
+                s.telescope_id = tid
+                s.status = status_val
+            all_schedules.extend(scheds)
 
-        client.schedule.get_many.side_effect = _get_many
+        client.schedule.get_many.return_value = _make_page(
+            all_schedules, total_number=len(all_schedules)
+        )
         return client
 
     def test_ok_telescope(self):
         """A telescope with a recent ingestion within cron window returns OK."""
         cadence = _make_cadence("0 * * * *", "planned")
         telescope = _make_telescope("Swift", "t1", [cadence])
-        recent_schedule = _make_schedule(LAST_30MIN_AGO)
+        recent_schedule = _make_schedule(LAST_30MIN_AGO, telescope_id="t1", status="planned")
         client = self._make_client(
             telescopes=[telescope],
             schedule_map={("t1", "planned"): [recent_schedule]},
@@ -244,14 +254,14 @@ class TestCheckAllTelescopes:
         results = check_all_telescopes(client=client, now=NOW)
 
         assert len(results) == 1
-        assert results[0].status == Status.OK
-        assert results[0].telescope_name == "Swift"
+        assert results.iloc[0]["status"] == "OK"
+        assert results.iloc[0]["telescope_name"] == "Swift"
 
     def test_late_telescope(self):
         """A telescope whose last schedule is older than the cron interval returns LATE."""
         cadence = _make_cadence("0 * * * *", "planned")
         telescope = _make_telescope("Chandra", "t2", [cadence])
-        old_schedule = _make_schedule(LAST_2H_AGO)
+        old_schedule = _make_schedule(LAST_2H_AGO, telescope_id="t2", status="planned")
         client = self._make_client(
             telescopes=[telescope],
             schedule_map={("t2", "planned"): [old_schedule]},
@@ -260,7 +270,7 @@ class TestCheckAllTelescopes:
         results = check_all_telescopes(client=client, now=NOW)
 
         assert len(results) == 1
-        assert results[0].status == Status.LATE
+        assert results.iloc[0]["status"] == "LATE"
 
     def test_missing_schedule(self):
         """A telescope with no schedules at all returns MISSING."""
@@ -274,7 +284,7 @@ class TestCheckAllTelescopes:
         results = check_all_telescopes(client=client, now=NOW)
 
         assert len(results) == 1
-        assert results[0].status == Status.MISSING
+        assert results.iloc[0]["status"] == "MISSING"
 
     def test_no_cadence_telescope(self):
         """A telescope with no cadence entries returns NO_CADENCE."""
@@ -284,15 +294,15 @@ class TestCheckAllTelescopes:
         results = check_all_telescopes(client=client, now=NOW)
 
         assert len(results) == 1
-        assert results[0].status == Status.NO_CADENCE
+        assert results.iloc[0]["status"] == "NO_CADENCE"
 
     def test_multiple_cadences(self):
         """A telescope with multiple cadences returns one result per cadence."""
         cadence_planned = _make_cadence("0 * * * *", "planned")
         cadence_performed = _make_cadence("0 0 * * *", "performed")
         telescope = _make_telescope("XMM", "t5", [cadence_planned, cadence_performed])
-        recent = _make_schedule(LAST_30MIN_AGO)
-        old = _make_schedule(LAST_2H_AGO)
+        recent = _make_schedule(LAST_30MIN_AGO, telescope_id="t5", status="planned")
+        old = _make_schedule(LAST_2H_AGO, telescope_id="t5", status="performed")
         client = self._make_client(
             telescopes=[telescope],
             schedule_map={
@@ -304,9 +314,9 @@ class TestCheckAllTelescopes:
         results = check_all_telescopes(client=client, now=NOW)
 
         assert len(results) == 2
-        statuses = {r.schedule_status: r.status for r in results}
-        assert statuses["planned"] == Status.OK
-        assert statuses["performed"] == Status.OK  # daily cron; 2h ago is fine
+        statuses = dict(zip(results["schedule_status"], results["status"]))
+        assert statuses["planned"] == "OK"
+        assert statuses["performed"] == "OK"  # daily cron; 2h ago is fine
 
     def test_multiple_telescopes(self):
         """Results include one entry per (telescope, cadence) pair."""
@@ -317,7 +327,7 @@ class TestCheckAllTelescopes:
         client = self._make_client(
             telescopes=[t1, t2],
             schedule_map={
-                ("t1", "planned"): [_make_schedule(LAST_30MIN_AGO)],
+                ("t1", "planned"): [_make_schedule(LAST_30MIN_AGO, telescope_id="t1", status="planned")],
                 ("t2", "planned"): [],
             },
         )
@@ -325,17 +335,17 @@ class TestCheckAllTelescopes:
         results = check_all_telescopes(client=client, now=NOW)
 
         assert len(results) == 2
-        result_map = {r.telescope_name: r for r in results}
-        assert result_map["Swift"].status == Status.OK
-        assert result_map["NuSTAR"].status == Status.MISSING
+        result_map = dict(zip(results["telescope_name"], results["status"]))
+        assert result_map["Swift"] == "OK"
+        assert result_map["NuSTAR"] == "MISSING"
 
     def test_empty_telescope_list(self):
-        """No telescopes → empty result list."""
+        """No telescopes → empty DataFrame."""
         client = self._make_client(telescopes=[])
 
         results = check_all_telescopes(client=client, now=NOW)
 
-        assert results == []
+        assert results.empty
 
     def test_default_client_created(self):
         """When no client is supplied, a default Client() is instantiated."""
@@ -347,4 +357,31 @@ class TestCheckAllTelescopes:
             results = check_all_telescopes(now=NOW)
 
             mock_client_cls.assert_called_once_with()
-            assert results == []
+            assert results.empty
+
+    def test_single_schedule_api_call(self):
+        """check_all_telescopes issues exactly one schedule API call regardless of telescope count."""
+        c1 = _make_cadence("0 * * * *", "planned")
+        c2 = _make_cadence("0 * * * *", "planned")
+        t1 = _make_telescope("Swift", "t1", [c1])
+        t2 = _make_telescope("NuSTAR", "t2", [c2])
+        client = self._make_client(telescopes=[t1, t2])
+
+        check_all_telescopes(client=client, now=NOW)
+
+        assert client.schedule.get_many.call_count == 1
+
+    def test_latest_schedule_chosen_by_created_on(self):
+        """When multiple schedules exist for a telescope/status, the newest is used."""
+        cadence = _make_cadence("0 * * * *", "planned")
+        telescope = _make_telescope("Swift", "t1", [cadence])
+        older = _make_schedule(LAST_2H_AGO, telescope_id="t1", status="planned")
+        newer = _make_schedule(LAST_30MIN_AGO, telescope_id="t1", status="planned")
+        client = self._make_client(
+            telescopes=[telescope],
+            schedule_map={("t1", "planned"): [older, newer]},
+        )
+
+        results = check_all_telescopes(client=client, now=NOW)
+
+        assert results.iloc[0]["status"] == "OK"  # newest is 30 min ago → OK

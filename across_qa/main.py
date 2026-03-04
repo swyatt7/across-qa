@@ -27,7 +27,7 @@ import sys
 
 from across.client import Client
 
-from across_qa.checker import Status, check_all_telescopes
+from across_qa.checker import check_all_telescopes
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -89,29 +89,21 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     client = Client()
-    results = check_all_telescopes(client=client)
+    df = check_all_telescopes(client=client)
 
     # Apply optional filters
     if args.telescope:
-        results = [
-            r for r in results if args.telescope.lower() in r.telescope_name.lower()
-        ]
+        df = df[df["telescope_name"].str.contains(args.telescope, case=False, na=False, regex=False)]
     if args.status:
-        results = [
-            r for r in results if r.schedule_status.lower() == args.status.lower()
-        ]
+        df = df[df["schedule_status"].str.lower() == args.status.lower()]
 
-    if not results:
+    if df.empty:
         print("No results found (check your filters).")
         return 0
 
-    any_problem = False
-    for result in results:
-        print(result)
-        if result.status in (Status.LATE, Status.MISSING):
-            any_problem = True
+    print(df.to_string(index=False))
 
-    if args.exit_code and any_problem:
+    if args.exit_code and df["status"].isin(["LATE", "MISSING"]).any():
         return 1
     return 0
 

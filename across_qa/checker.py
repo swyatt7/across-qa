@@ -2,23 +2,27 @@
 Core QA logic for comparing telescope schedule ingestion against expected cadence.
 
 For each telescope registered in the ACROSS server this module:
-  1. Fetches the telescope's ``schedule_cadences`` (cron expressions + expected status).
-  2. Queries the most recently created schedule for that telescope / status combination.
-  3. Uses ``croniter`` to compute when the *next* schedule was due after the last
+  1. Fetches all telescopes' ``schedule_cadences`` (cron expressions + expected status).
+  2. Issues a **single bulk query** for all schedules across every telescope ID.
+  3. Parses the returned schedules in-memory to find the most recently created one
+     per (telescope, status) pair.
+  4. Uses ``croniter`` to compute when the *next* schedule was due after the last
      ingested one and decides whether ingestion is on-time, late, or missing.
 
-The public entry point is :func:`check_all_telescopes`, which returns a list of
-:class:`CadenceResult` objects that callers can inspect or print.
+The public entry point is :func:`check_all_telescopes`, which returns a
+``pandas.DataFrame`` with one row per (telescope, cadence) pair.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING
 
+import pandas as pd
 from croniter import croniter
 
 from across.client import Client
@@ -74,43 +78,70 @@ def _now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def _latest_schedule(
+def _status_value(status_field) -> str:
+    """Normalise a ScheduleStatus enum or plain string to its string value."""
+    return status_field.value if hasattr(status_field, "value") else str(status_field)
+
+
+def _fetch_all_schedules(
     client: Client,
-    telescope_id: str,
-    schedule_status: str,
-) -> "sdk.Schedule | None":
-    """Return the most recently *created* schedule for a telescope+status pair.
+    telescope_ids: list[str],
+) -> list["sdk.Schedule"]:
+    """Fetch every schedule for the given telescope IDs via a single paginated query.
 
-    Fetches up to the first page of results (newest first based on
-    ``created_on``) and returns the first item, or ``None`` when there are no
-    schedules.
+    Parameters
+    ----------
+    client:
+        Initialised ACROSS client.
+    telescope_ids:
+        IDs of telescopes whose schedules should be retrieved.
+
+    Returns
+    -------
+    list[sdk.Schedule]
+        All schedules returned by the API for those telescopes.
     """
-    import across.sdk.v1 as sdk_types
+    if not telescope_ids:
+        return []
 
-    try:
-        status_enum = sdk_types.ScheduleStatus(schedule_status)
-    except ValueError:
-        logger.warning("Unknown schedule status %r; skipping", schedule_status)
-        return None
+    all_items: list = []
+    page_num = 1
+    page_limit = 1000
 
-    try:
-        page = client.schedule.get_many(
-            telescope_ids=[telescope_id],
-            status=status_enum,
-            page=1,
-            page_limit=1,
-        )
-    except Exception:
-        logger.exception(
-            "Failed to fetch schedules for telescope_id=%s status=%s",
-            telescope_id,
-            schedule_status,
-        )
-        return None
+    while True:
+        try:
+            page = client.schedule.get_many(
+                telescope_ids=telescope_ids,
+                page=page_num,
+                page_limit=page_limit,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to fetch schedules for telescope_ids=%s", telescope_ids
+            )
+            break
 
-    if page.items:
-        return page.items[0]
-    return None
+        all_items.extend(page.items)
+        total = page.total_number or 0
+        if not page.items or len(all_items) >= total:
+            break
+        page_num += 1
+
+    return all_items
+
+
+def _build_latest_lookup(
+    schedules: list["sdk.Schedule"],
+) -> dict[tuple[str, str], "sdk.Schedule"]:
+    """Return a mapping of ``(telescope_id, status_value)`` → most-recently created schedule."""
+    latest: dict[tuple[str, str], "sdk.Schedule"] = {}
+    for sched in schedules:
+        status_val = _status_value(sched.status)
+        key = (sched.telescope_id, status_val)
+        existing = latest.get(key)
+        if existing is None or sched.created_on > existing.created_on:
+            latest[key] = sched
+    return latest
 
 
 def check_cadence(
@@ -233,11 +264,34 @@ def check_cadence(
     )
 
 
+_RESULT_COLUMNS = [
+    "telescope_name",
+    "telescope_id",
+    "schedule_status",
+    "cron",
+    "last_ingested",
+    "next_expected",
+    "status",
+    "message",
+]
+
+
 def check_all_telescopes(
     client: Client | None = None,
     now: datetime | None = None,
-) -> list[CadenceResult]:
+) -> pd.DataFrame:
     """Fetch all telescopes and evaluate each cadence against recent schedules.
+
+    Performs exactly **two** API calls:
+
+    1. ``client.telescope.get_many()`` — retrieves all telescopes with their
+       cadence configurations.
+    2. ``client.schedule.get_many(telescope_ids=[...])`` — retrieves all
+       schedules for every telescope that has at least one cadence, paginating
+       as needed.
+
+    The returned schedules are parsed in-memory to find the most recently
+    created schedule per (telescope, status) pair before cadence evaluation.
 
     Parameters
     ----------
@@ -250,8 +304,10 @@ def check_all_telescopes(
 
     Returns
     -------
-    list[CadenceResult]
-        One entry per (telescope, cadence) pair.
+    pd.DataFrame
+        One row per (telescope, cadence) pair with columns:
+        ``telescope_name``, ``telescope_id``, ``schedule_status``, ``cron``,
+        ``last_ingested``, ``next_expected``, ``status``, ``message``.
     """
     if client is None:
         client = Client()
@@ -259,14 +315,34 @@ def check_all_telescopes(
     if now is None:
         now = _now_utc()
 
+    # ------------------------------------------------------------------ #
+    # 1. Fetch all telescopes
+    # ------------------------------------------------------------------ #
     telescopes = client.telescope.get_many()
-    results: list[CadenceResult] = []
+
+    # ------------------------------------------------------------------ #
+    # 2. Single bulk schedule query for all telescopes that have cadences
+    # ------------------------------------------------------------------ #
+    telescope_ids_with_cadences = [
+        t.id for t in telescopes if t.schedule_cadences
+    ]
+    all_schedules = _fetch_all_schedules(client, telescope_ids_with_cadences)
+
+    # ------------------------------------------------------------------ #
+    # 3. Build (telescope_id, status) → most-recent schedule lookup
+    # ------------------------------------------------------------------ #
+    latest_by_key = _build_latest_lookup(all_schedules)
+
+    # ------------------------------------------------------------------ #
+    # 4. Evaluate each telescope's cadences
+    # ------------------------------------------------------------------ #
+    rows: list[CadenceResult] = []
 
     for telescope in telescopes:
         cadences = telescope.schedule_cadences or []
 
         if not cadences:
-            results.append(
+            rows.append(
                 CadenceResult(
                     telescope_name=telescope.name,
                     telescope_id=telescope.id,
@@ -281,21 +357,30 @@ def check_all_telescopes(
             continue
 
         for cadence in cadences:
-            latest = _latest_schedule(
-                client,
-                telescope_id=telescope.id,
-                schedule_status=cadence.schedule_status,
-            )
+            status_val = _status_value(cadence.schedule_status)
+            latest = latest_by_key.get((telescope.id, status_val))
             last_ingested = latest.created_on if latest is not None else None
             result = check_cadence(
                 telescope_name=telescope.name,
                 telescope_id=telescope.id,
                 cron=cadence.cron,
-                schedule_status=cadence.schedule_status,
+                schedule_status=status_val,
                 last_ingested=last_ingested,
                 now=now,
             )
-            results.append(result)
+            rows.append(result)
             logger.debug("Checked %s: %s", telescope.name, result)
 
-    return results
+    if not rows:
+        return pd.DataFrame(columns=_RESULT_COLUMNS)
+
+    df = pd.DataFrame(
+        [
+            {
+                **{k: v for k, v in dataclasses.asdict(r).items() if k != "status"},
+                "status": r.status.value,
+            }
+            for r in rows
+        ]
+    )
+    return df
