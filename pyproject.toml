@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "across-qa"
+version = "0.1.0"
+description = "QA scripts for the NASA-ACROSS project: checks telescope schedule ingestion cadence"
+requires-python = ">=3.10"
+dependencies = [
+    "across-client>=1.0.0",
+    "croniter>=6.0.0",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+]
+
+[project.scripts]
+across-qa = "across_qa.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
