@@ -214,8 +214,8 @@ class TestGetScheduleHistory:
         call_kwargs = client.schedule.get_many.call_args.kwargs
         assert call_kwargs["date_begin"] == custom
 
-    def test_naive_date_begin_gets_utc(self):
-        """A naive date_begin datetime is treated as UTC (no error raised)."""
+    def test_naive_date_begin_forwarded_unchanged(self):
+        """A naive date_begin datetime is forwarded to the API as-is (no UTC coercion)."""
         t = _make_telescope("Swift", "t1")
         client = _make_client([t], [])
         naive = datetime(2024, 1, 1)  # no tzinfo
@@ -223,7 +223,8 @@ class TestGetScheduleHistory:
         get_schedule_history(client=client, date_begin=naive)
 
         call_kwargs = client.schedule.get_many.call_args.kwargs
-        assert call_kwargs["date_begin"].tzinfo is not None
+        assert call_kwargs["date_begin"] == naive
+        assert call_kwargs["date_begin"].tzinfo is None
 
     def test_empty_telescope_list_returns_empty_df(self):
         """No telescopes → empty DataFrame with correct columns."""

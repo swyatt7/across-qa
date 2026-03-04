@@ -27,7 +27,7 @@ Usage
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -86,13 +86,6 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
-def _ensure_utc(dt: datetime) -> datetime:
-    """Attach UTC timezone to a naive datetime; return tz-aware datetimes unchanged."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
-
-
 def _fmt_dt(value: object) -> str:
     """Format a datetime-like value as an ISO-8601 UTC string, or fall back to str()."""
     if hasattr(value, "strftime"):
@@ -146,8 +139,6 @@ def get_schedule_history(
 
     if date_begin is None:
         date_begin = _now_utc() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
-    else:
-        date_begin = _ensure_utc(date_begin)
 
     # ------------------------------------------------------------------
     # 1. Fetch all telescopes for name/short-name → id resolution.
