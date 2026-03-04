@@ -5,9 +5,11 @@ Usage
 ::
 
     python -m across_qa.main [--telescope TELESCOPE] [--status STATUS] [--exit-code]
+                             [--plot] [--plot-output PATH]
 
     # or via the installed script:
     across-qa [--telescope TELESCOPE] [--status STATUS] [--exit-code]
+              [--plot] [--plot-output PATH]
 
 Options
 -------
@@ -17,6 +19,10 @@ Options
     Filter cadence results by schedule status (e.g. ``planned``, ``performed``).
 --exit-code
     Exit with a non-zero status code when any check is LATE or MISSING.
+--plot
+    Open an interactive Plotly timeline in the default web browser.
+--plot-output PATH
+    Save the Plotly timeline as an HTML file at PATH (implies ``--plot``).
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ import sys
 from across.client import Client
 
 from across_qa.checker import check_all_telescopes
+from across_qa.visualization import plot_timeline
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -62,6 +69,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Enable verbose logging.",
+    )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        default=False,
+        help="Open an interactive Plotly timeline in the default web browser.",
+    )
+    parser.add_argument(
+        "--plot-output",
+        metavar="PATH",
+        default=None,
+        help="Save the Plotly timeline as an HTML file at PATH (implies --plot).",
     )
     return parser
 
@@ -102,6 +121,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print(df.to_string(index=False))
+
+    # ------------------------------------------------------------------ #
+    # Optional visualization
+    # ------------------------------------------------------------------ #
+    if args.plot or args.plot_output:
+        fig = plot_timeline(df, output_path=args.plot_output)
+        if args.plot_output:
+            print(f"Timeline saved to {args.plot_output}")
+        if args.plot:
+            fig.show()
 
     if args.exit_code and df["status"].isin(["LATE", "MISSING"]).any():
         return 1
