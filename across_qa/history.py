@@ -27,11 +27,11 @@ Usage
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-import pandas as pd
-import plotly.graph_objects as go
+import pandas as pd # type: ignore
+import plotly.graph_objects as go # type: ignore
 
 from across.client import Client
 from across_qa.checker import _status_value
@@ -172,7 +172,7 @@ def get_schedule_history(
     # ------------------------------------------------------------------
     try:
         result = client.schedule.get_many(
-            telescope_ids=telescope_ids,
+            telescope_ids=telescope_ids,  # type: ignore
             date_range_begin=date_range_begin,
             date_range_end=date_range_end,
         )
@@ -371,7 +371,8 @@ def plot_schedule_history(
 
 def _add_today_line(fig: go.Figure) -> None:
     """Add a dashed vertical line at today's date to *fig* (mutates it)."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now_text = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     fig.add_shape(
         type="line",
         x0=today,
@@ -387,7 +388,7 @@ def _add_today_line(fig: go.Figure) -> None:
         y=1,
         yref="paper",
         xref="x",
-        text="Today",
+        text=now_text,
         showarrow=False,
         font=dict(color="red"),
         xanchor="left",

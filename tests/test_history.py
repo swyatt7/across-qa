@@ -6,8 +6,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
-import pytest
+import plotly.graph_objects as go # type: ignore
+import pandas as pd # type: ignore
 
 from across_qa.history import (
     _DEFAULT_LOOKBACK_DAYS,
@@ -354,7 +354,6 @@ class TestPlotScheduleHistory:
 
     def test_returns_figure(self):
         """plot_schedule_history always returns a Plotly Figure."""
-        import plotly.graph_objects as go
 
         df = _make_history_df(
             {

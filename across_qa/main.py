@@ -33,8 +33,8 @@ import sys
 
 from across.client import Client
 
-from across_qa.checker import check_all_telescopes
-from across_qa.visualization import plot_timeline
+from across_qa.checker import check_telescope_ingestion_status
+from across_qa.visualization import plot_ingesetion_status_timeline
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     client = Client()
-    df = check_all_telescopes(client=client)
+    df = check_telescope_ingestion_status(client=client)
 
     # Apply optional filters
     if args.telescope:
@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     # Optional visualization
     # ------------------------------------------------------------------ #
     if args.plot or args.plot_output:
-        fig = plot_timeline(df, output_path=args.plot_output)
+        fig = plot_ingesetion_status_timeline(df, output_path=args.plot_output)
         if args.plot_output:
             print(f"Timeline saved to {args.plot_output}")
         if args.plot:

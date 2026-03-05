@@ -13,18 +13,18 @@ Usage
 -----
 ::
 
-    from across_qa.visualization import plot_timeline
+    from across_qa.visualization import plot_ingesetion_status_timeline
 
-    fig = plot_timeline(df)          # display in notebook / browser
-    fig = plot_timeline(df, "out.html")  # also save to file
+    fig = plot_ingesetion_status_timeline(df)          # display in notebook / browser
+    fig = plot_ingesetion_status_timeline(df, "out.html")  # also save to file
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pandas as pd
-import plotly.graph_objects as go
+import pandas as pd  #type: ignore
+import plotly.graph_objects as go  #type: ignore
 
 # Ordered so the legend reads: OK → LATE → MISSING → NO_CADENCE
 _STATUS_ORDER = ["OK", "LATE", "MISSING", "NO_CADENCE"]
@@ -44,7 +44,7 @@ _STATUS_SYMBOLS: dict[str, str] = {
 }
 
 
-def plot_timeline(
+def plot_ingesetion_status_timeline(
     df: pd.DataFrame,
     output_path: str | None = None,
 ) -> go.Figure:
@@ -55,7 +55,8 @@ def plot_timeline(
     df:
         DataFrame as returned by :func:`across_qa.checker.check_all_telescopes`.
         Expected columns: ``telescope_name``, ``schedule_status``,
-        ``last_ingested``, ``next_expected``, ``status``, ``message``.
+        ``last_ingested``, ``ingested_attempts``, ``next_ingestion_attempt``,
+        ``status``, ``message``.
     output_path:
         Optional file path (e.g. ``"report.html"``) to which the interactive
         figure is saved.  The figure is returned regardless.
@@ -75,7 +76,7 @@ def plot_timeline(
     df["label"] = df[name_col] + " (" + df["schedule_status"] + ")"
 
     # Ensure datetime columns are tz-aware so Plotly renders them correctly.
-    for col in ("last_ingested", "next_expected"):
+    for col in ("last_ingested", "next_ingestion_attempt"):
         if col in df.columns and pd.api.types.is_datetime64_any_dtype(df[col]):
             if df[col].dt.tz is None:
                 df[col] = df[col].dt.tz_localize("UTC")
@@ -104,7 +105,8 @@ def plot_timeline(
                 f"<b>{r['telescope_name']}</b> — {r['schedule_status']}<br>"
                 f"Status: <b>{r['status']}</b><br>"
                 f"Last ingested: {r['last_ingested'].strftime('%Y-%m-%dT%H:%M:%SZ') if pd.notna(r['last_ingested']) else 'never'}<br>"
-                f"Next expected: {r['next_expected'].strftime('%Y-%m-%dT%H:%M:%SZ') if pd.notna(r['next_expected']) else 'N/A'}<br>"
+                f"Next expected: {r['next_ingestion_attempt'].strftime('%Y-%m-%dT%H:%M:%SZ') if pd.notna(r['next_ingestion_attempt']) else 'N/A'}<br>"
+                f"Missed attempts: {len(r['ingested_attempts']) if isinstance(r['ingested_attempts'], list) else 0}<br>"
                 f"{r['message']}"
             ),
             axis=1,
@@ -124,21 +126,21 @@ def plot_timeline(
             )
         )
 
-        # --- connector lines to next_expected ------------------------- #
-        # Draw a thin horizontal line from last_ingested → next_expected so
+        # --- connector lines to next_ingestion_attempt -------------------- #
+        # Draw a thin horizontal line from last_ingested → next_ingestion_attempt so
         # the viewer can see how far ahead (or behind) each schedule is.
-        has_next = subset[subset["next_expected"].notna()]
+        has_next = subset[subset["next_ingestion_attempt"].notna()]
         if not has_next.empty:
-            x_next = has_next["next_expected"].where(
-                has_next["next_expected"].notna(), other=now
+            x_next = has_next["next_ingestion_attempt"].where(
+                has_next["next_ingestion_attempt"].notna(), other=now
             )
-            # Add the next_expected markers in a faded version of the same colour.
+            # Add the next_ingestion_attempt markers in a faded version of the same colour.
             fig.add_trace(
                 go.Scatter(
                     x=x_next,
                     y=has_next["label"],
                     mode="markers",
-                    name=f"{status} (next expected)",
+                    name=f"{status} (next attempt)",
                     legendgroup=status,
                     marker=dict(
                         color=color,
@@ -158,7 +160,7 @@ def plot_timeline(
             # different telescopes.
             for _, row in has_next.iterrows():
                 li = row["last_ingested"] if pd.notna(row["last_ingested"]) else now
-                ne = row["next_expected"]
+                ne = row["next_ingestion_attempt"]
                 fig.add_shape(
                     type="line",
                     xref="x",
@@ -169,6 +171,33 @@ def plot_timeline(
                     y1=row["label"],
                     line=dict(color=color, width=2, dash="dot"),
                 )
+        
+        # --- missed attempts (ingested_attempts) markers -------------------- #
+        # Plot each missed cron attempt as a small faded marker
+        for _, row in subset.iterrows():
+            if isinstance(row["ingested_attempts"], list) and row["ingested_attempts"]:
+                for attempt in row["ingested_attempts"]:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=[attempt],
+                            y=[row["label"]],
+                            mode="markers",
+                            name=f"{status} (missed)",
+                            legendgroup=status,
+                            marker=dict(
+                                color=color,
+                                size=6,
+                                symbol="x",
+                                opacity=0.3,
+                                line=dict(width=1, color=color),
+                            ),
+                            hovertemplate=(
+                                f"<b>{row['telescope_name']}</b><br>"
+                                "Missed attempt: %{x}<extra></extra>"
+                            ),
+                            showlegend=False,
+                        )
+                    )
 
     # ------------------------------------------------------------------ #
     # "Now" reference line — vertical line on the time (X) axis.
