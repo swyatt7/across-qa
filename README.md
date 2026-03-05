@@ -86,7 +86,7 @@ Each telescope / schedule-status combination is plotted as a marker on the time 
 
 A dotted connector line extends from the last ingested time to the next expected ingestion, and small faded markers indicate individual missed cron attempts.
 
-![Telescope Schedule Ingestion Status](https://github.com/user-attachments/assets/5f741e09-ef87-4066-87f1-6bf6d7a10772)
+![Telescope Schedule Ingestion Status](docs/images/ingestion-status.png)
 
 ---
 
@@ -123,4 +123,4 @@ Each schedule is rendered as a coloured rectangle spanning its date range:
 
 Overlapping rectangles use a semi-transparent fill so all records remain visible simultaneously. A dashed red vertical line marks today's date.
 
-![Telescope Schedule History](https://github.com/user-attachments/assets/95a02082-1a65-4ce1-9d61-240e5433082c)
+![Telescope Schedule History](docs/images/schedule-history.png)
