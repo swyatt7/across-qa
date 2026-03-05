@@ -54,8 +54,10 @@ def _make_schedule(
     s = MagicMock()
     s.telescope_id = telescope_id
     s.status = status
-    s.date_begin = date_begin
-    s.date_end = date_end
+    date_range = MagicMock()
+    date_range.begin = date_begin
+    date_range.end = date_end
+    s.date_range = date_range
     s.created_on = created_on or NOW
     return s
 
@@ -80,11 +82,20 @@ def _make_history_df(*rows: dict) -> pd.DataFrame:
         "telescope_short_name",
         "telescope_id",
         "status",
-        "date_begin",
-        "date_end",
+        "date_range_begin",
+        "date_range_end",
         "created_on",
     ]
-    return pd.DataFrame(list(rows), columns=columns)
+    # Convert date_begin/date_end keys to date_range_begin/date_range_end
+    converted_rows = []
+    for row in rows:
+        converted = {k: v for k, v in row.items()}
+        if "date_begin" in converted:
+            converted["date_range_begin"] = converted.pop("date_begin")
+        if "date_end" in converted:
+            converted["date_range_end"] = converted.pop("date_end")
+        converted_rows.append(converted)
+    return pd.DataFrame(converted_rows, columns=columns)
 
 
 # ---------------------------------------------------------------------------
@@ -112,8 +123,8 @@ class TestGetScheduleHistory:
             "telescope_short_name",
             "telescope_id",
             "status",
-            "date_begin",
-            "date_end",
+            "date_range_begin",
+            "date_range_end",
             "created_on",
         }
         t = _make_telescope("Swift", "t1")
@@ -187,44 +198,44 @@ class TestGetScheduleHistory:
         assert len(df) == 2
 
     def test_default_date_begin_is_90_days_ago(self):
-        """date_begin defaults to _DEFAULT_LOOKBACK_DAYS days in the past."""
+        """date_range_begin defaults to _DEFAULT_LOOKBACK_DAYS days in the past."""
         t = _make_telescope("Swift", "t1")
         client = _make_client([t], [])
 
         get_schedule_history(client=client)
 
         call_kwargs = client.schedule.get_many.call_args.kwargs
-        assert "date_begin" in call_kwargs
+        assert "date_range_begin" in call_kwargs
         # Allow a small tolerance for test execution time.
         delta = abs(
-            (call_kwargs["date_begin"] - (
-                datetime.now(tz=timezone.utc) - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+            (call_kwargs["date_range_begin"] - (
+                datetime.now() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
             )).total_seconds()
         )
         assert delta < 5
 
     def test_custom_date_begin_is_forwarded(self):
-        """A supplied date_begin is forwarded to the API call."""
+        """A supplied date_range_begin is forwarded to the API call."""
         t = _make_telescope("Swift", "t1")
         client = _make_client([t], [])
         custom = _utc(datetime(2024, 1, 1))
 
-        get_schedule_history(client=client, date_begin=custom)
+        get_schedule_history(client=client, date_range_begin=custom)
 
         call_kwargs = client.schedule.get_many.call_args.kwargs
-        assert call_kwargs["date_begin"] == custom
+        assert call_kwargs["date_range_begin"] == custom
 
     def test_naive_date_begin_forwarded_unchanged(self):
-        """A naive date_begin datetime is forwarded to the API as-is (no UTC coercion)."""
+        """A naive date_range_begin datetime is forwarded to the API as-is (no UTC coercion)."""
         t = _make_telescope("Swift", "t1")
         client = _make_client([t], [])
         naive = datetime(2024, 1, 1)  # no tzinfo
 
-        get_schedule_history(client=client, date_begin=naive)
+        get_schedule_history(client=client, date_range_begin=naive)
 
         call_kwargs = client.schedule.get_many.call_args.kwargs
-        assert call_kwargs["date_begin"] == naive
-        assert call_kwargs["date_begin"].tzinfo is None
+        assert call_kwargs["date_range_begin"] == naive
+        assert call_kwargs["date_range_begin"].tzinfo is None
 
     def test_empty_telescope_list_returns_empty_df(self):
         """No telescopes → empty DataFrame with correct columns."""
@@ -339,7 +350,7 @@ class TestPlotScheduleHistory:
         df = pd.DataFrame(
             columns=[
                 "telescope_name", "telescope_short_name", "telescope_id",
-                "status", "date_begin", "date_end", "created_on",
+                "status", "date_range_begin", "date_range_end", "created_on",
             ]
         )
         fig = plot_schedule_history(df)

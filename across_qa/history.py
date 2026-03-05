@@ -17,7 +17,7 @@ Usage
     from across_qa.history import get_schedule_history, plot_schedule_history
 
     df = get_schedule_history()                            # all telescopes, last 90 days
-    df = get_schedule_history(date_begin=datetime(...))    # custom start date
+    df = get_schedule_history(date_range_begin=datetime(...))    # custom start date
     df = get_schedule_history(telescope_identifiers=["Swift", "Fermi"])  # subset
 
     fig = plot_schedule_history(df)            # display in notebook / browser
@@ -34,7 +34,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from across.client import Client
-from across_qa.checker import _now_utc, _status_value
+from across_qa.checker import _status_value
 
 if TYPE_CHECKING:  # pragma: no cover
     import across.sdk.v1 as sdk
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-#: Default look-back window when no ``date_begin`` is supplied.
+#: Default look-back window when no ``date_range_begin`` is supplied.
 _DEFAULT_LOOKBACK_DAYS: int = 90
 
 #: Columns returned by :func:`get_schedule_history`.
@@ -54,8 +54,8 @@ _HISTORY_COLUMNS: list[str] = [
     "telescope_short_name",
     "telescope_id",
     "status",
-    "date_begin",
-    "date_end",
+    "date_range_begin",
+    "date_range_end",
     "created_on",
 ]
 
@@ -99,7 +99,7 @@ def _fmt_dt(value: object) -> str:
 
 def get_schedule_history(
     client: Client | None = None,
-    date_begin: datetime | None = None,
+    date_range_begin: datetime | None = None,
     telescope_identifiers: list[str] | None = None,
 ) -> pd.DataFrame:
     """Fetch the complete schedule history for a set of telescopes.
@@ -108,16 +108,16 @@ def get_schedule_history(
 
     1. ``client.telescope.get_many()`` — retrieves all telescopes so that
        name/short-name identifiers can be resolved to IDs.
-    2. ``client.schedule.get_many(telescope_ids=[...], date_begin=...)`` —
+    2. ``client.schedule.get_many(telescope_ids=[...], date_range_begin=...)`` —
        retrieves all schedules for those telescopes starting from
-       ``date_begin``.
+       ``date_range_begin``.
 
     Parameters
     ----------
     client:
         An initialised :class:`~across.client.Client` instance.  When
         ``None`` a default (unauthenticated) client is created.
-    date_begin:
+    date_range_begin:
         Earliest schedule start date to include.  Defaults to
         :data:`_DEFAULT_LOOKBACK_DAYS` days before the current UTC time.
         Naive datetimes are treated as UTC.
@@ -130,15 +130,15 @@ def get_schedule_history(
     pd.DataFrame
         One row per schedule with columns: ``telescope_name``,
         ``telescope_short_name``, ``telescope_id``, ``status``,
-        ``date_begin``, ``date_end``, ``created_on``.
+        ``date_range_begin``, ``date_range_end``, ``created_on``.
         Returns an empty DataFrame (with the correct columns) when no
         matching schedules are found.
     """
     if client is None:
         client = Client()
 
-    if date_begin is None:
-        date_begin = _now_utc() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+    if date_range_begin is None:
+        date_range_begin = datetime.now() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
 
     # ------------------------------------------------------------------
     # 1. Fetch all telescopes for name/short-name → id resolution.
@@ -167,7 +167,7 @@ def get_schedule_history(
     try:
         result = client.schedule.get_many(
             telescope_ids=telescope_ids,
-            date_begin=date_begin,
+            date_range_begin=date_range_begin,
         )
     except Exception:
         logger.exception(
@@ -191,14 +191,15 @@ def get_schedule_history(
                 "Skipping schedule for unknown telescope_id=%s", sched.telescope_id
             )
             continue
+        date_range = sched.date_range
         rows.append(
             {
                 "telescope_name": t.name,
                 "telescope_short_name": getattr(t, "short_name", None) or t.name,
                 "telescope_id": sched.telescope_id,
                 "status": _status_value(sched.status),
-                "date_begin": getattr(sched, "date_begin", None),
-                "date_end": getattr(sched, "date_end", None),
+                "date_range_begin": getattr(date_range, "begin", None),
+                "date_range_end": getattr(date_range, "end", None),
                 "created_on": getattr(sched, "created_on", None),
             }
         )
@@ -216,7 +217,7 @@ def plot_schedule_history(
     """Build an interactive Plotly timeline of telescope schedule history.
 
     Each schedule is rendered as a coloured rectangle spanning its
-    ``date_begin``–``date_end`` range on the date (X) axis.  Overlapping
+    ``date_range_begin``–``date_range_end`` range on the date (X) axis.  Overlapping
     rectangles are drawn with a semi-transparent fill so all records
     remain visible simultaneously.
 
@@ -231,7 +232,7 @@ def plot_schedule_history(
     df:
         DataFrame as returned by :func:`get_schedule_history`.
         Required columns: ``telescope_short_name``, ``status``,
-        ``date_begin``, ``date_end``.
+        ``date_range_begin``, ``date_range_end``.
     output_path:
         Optional path to save an HTML export of the figure.
 
@@ -251,7 +252,7 @@ def plot_schedule_history(
     df = df.copy()
 
     # Ensure tz-aware datetimes so Plotly renders correctly.
-    for col in ("date_begin", "date_end"):
+    for col in ("date_range_begin", "date_range_end"):
         if col in df.columns and pd.api.types.is_datetime64_any_dtype(df[col]):
             if df[col].dt.tz is None:
                 df[col] = df[col].dt.tz_localize("UTC")
@@ -292,8 +293,8 @@ def plot_schedule_history(
         hover_texts: list[str] = []
 
         for _, row in subset.iterrows():
-            x0 = row.get("date_begin")
-            x1 = row.get("date_end")
+            x0 = row.get("date_range_begin")
+            x1 = row.get("date_range_end")
             if pd.isna(x0) or pd.isna(x1):
                 continue
 
