@@ -1,0 +1,36 @@
+name: Telescope Ingestion Status → Slack
+
+on:
+  # Run every day at 08:00 Mountain Standard Time (= 15:00 UTC).
+  schedule:
+    - cron: "0 15 * * *"
+  # Allow on-demand runs from the Actions UI or via the API.
+  workflow_dispatch:
+
+jobs:
+  ingestion-check:
+    name: Check ingestion status and notify Slack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install across-qa and reporting dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+          pip install slack_sdk kaleido
+
+      - name: Run ingestion check and post to Slack
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+        run: python scripts/slack_ingestion_report.py

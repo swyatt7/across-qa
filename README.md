@@ -1,6 +1,50 @@
 # across-qa
 qa scripts for the NASA-ACROSS project
 
+## Daily Slack ingestion-status notification
+
+A GitHub Actions workflow (`.github/workflows/slack-ingestion-check.yml`)
+runs automatically every day at **08:00 MST** and posts the current telescope
+schedule ingestion health — along with a PNG timeline — to a Slack channel.
+
+### One-time configuration
+
+Follow these steps once to enable the workflow in your fork / repository:
+
+#### 1. Create a Slack app and bot
+
+1. Go to <https://api.slack.com/apps> and click **Create New App → From scratch**.
+2. Give the app a name (e.g. *across-qa-bot*) and select the target workspace.
+3. Under **OAuth & Permissions → Scopes → Bot Token Scopes**, add:
+   - `chat:write` — post messages
+   - `files:write` — upload the PNG attachment
+4. Click **Install to Workspace** and copy the **Bot User OAuth Token**
+   (starts with `xoxb-`).
+5. Invite the bot to the target Slack channel:
+   ```
+   /invite @across-qa-bot
+   ```
+6. Note the **Channel ID** (right-click the channel in Slack → *View channel
+   details* → copy the ID at the bottom, e.g. `C01234ABCDE`).
+
+#### 2. Add repository secrets
+
+In your GitHub repository go to **Settings → Secrets and variables → Actions**
+and add:
+
+| Secret name        | Value                                                  |
+|--------------------|--------------------------------------------------------|
+| `SLACK_BOT_TOKEN`  | Bot User OAuth Token from step 4 above (`xoxb-…`)     |
+| `SLACK_CHANNEL_ID` | Slack channel ID from step 6 above (e.g. `C01234ABCDE`) |
+
+#### 3. Trigger a test run
+
+Navigate to **Actions → Telescope Ingestion Status → Slack** and click
+**Run workflow** to verify the bot posts correctly before the first scheduled
+run.
+
+---
+
 ## Quick start
 
 Install in editable mode:
