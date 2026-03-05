@@ -100,6 +100,7 @@ def _fmt_dt(value: object) -> str:
 def get_schedule_history(
     client: Client | None = None,
     date_range_begin: datetime | None = None,
+    date_range_end: datetime | None = None,
     telescope_identifiers: list[str] | None = None,
 ) -> pd.DataFrame:
     """Fetch the complete schedule history for a set of telescopes.
@@ -108,9 +109,9 @@ def get_schedule_history(
 
     1. ``client.telescope.get_many()`` — retrieves all telescopes so that
        name/short-name identifiers can be resolved to IDs.
-    2. ``client.schedule.get_many(telescope_ids=[...], date_range_begin=...)`` —
-       retrieves all schedules for those telescopes starting from
-       ``date_range_begin``.
+    2. ``client.schedule.get_many(telescope_ids=[...], date_range_begin=...,
+       date_range_end=...)`` — retrieves all schedules for those telescopes
+       within the requested date window.
 
     Parameters
     ----------
@@ -119,8 +120,10 @@ def get_schedule_history(
         ``None`` a default (unauthenticated) client is created.
     date_range_begin:
         Earliest schedule start date to include.  Defaults to
-        :data:`_DEFAULT_LOOKBACK_DAYS` days before the current UTC time.
-        Naive datetimes are treated as UTC.
+        :data:`_DEFAULT_LOOKBACK_DAYS` days before the current time.
+    date_range_end:
+        Latest schedule start date to include.  Defaults to 3 days after
+        the current time.
     telescope_identifiers:
         Telescope names (full or short) or UUID strings to include.  When
         ``None`` the history for **all** telescopes is returned.
@@ -139,6 +142,9 @@ def get_schedule_history(
 
     if date_range_begin is None:
         date_range_begin = datetime.now() - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+
+    if date_range_end is None:
+        date_range_end = datetime.now() + timedelta(days=3)
 
     # ------------------------------------------------------------------
     # 1. Fetch all telescopes for name/short-name → id resolution.
@@ -168,6 +174,7 @@ def get_schedule_history(
         result = client.schedule.get_many(
             telescope_ids=telescope_ids,
             date_range_begin=date_range_begin,
+            date_range_end=date_range_end,
         )
     except Exception:
         logger.exception(
@@ -245,6 +252,7 @@ def plot_schedule_history(
 
     if df.empty:
         _apply_history_layout(fig)
+        _add_today_line(fig)
         if output_path:
             fig.write_html(output_path)
         return fig
@@ -353,11 +361,38 @@ def plot_schedule_history(
         )
 
     _apply_history_layout(fig, y_map=y_map, telescope_names=telescope_names)
+    _add_today_line(fig)
 
     if output_path:
         fig.write_html(output_path)
 
     return fig
+
+
+def _add_today_line(fig: go.Figure) -> None:
+    """Add a dashed vertical line at today's date to *fig* (mutates it)."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    fig.add_shape(
+        type="line",
+        x0=today,
+        x1=today,
+        y0=0,
+        y1=1,
+        yref="paper",
+        xref="x",
+        line=dict(color="red", width=2, dash="dash"),
+    )
+    fig.add_annotation(
+        x=today,
+        y=1,
+        yref="paper",
+        xref="x",
+        text="Today",
+        showarrow=False,
+        font=dict(color="red"),
+        xanchor="left",
+        yanchor="top",
+    )
 
 
 def _apply_history_layout(

@@ -225,6 +225,33 @@ class TestGetScheduleHistory:
         call_kwargs = client.schedule.get_many.call_args.kwargs
         assert call_kwargs["date_range_begin"] == custom
 
+    def test_default_date_end_is_3_days_from_now(self):
+        """date_range_end defaults to ~3 days in the future."""
+        t = _make_telescope("Swift", "t1")
+        client = _make_client([t], [])
+
+        get_schedule_history(client=client)
+
+        call_kwargs = client.schedule.get_many.call_args.kwargs
+        assert "date_range_end" in call_kwargs
+        delta = abs(
+            (call_kwargs["date_range_end"] - (
+                datetime.now() + timedelta(days=3)
+            )).total_seconds()
+        )
+        assert delta < 5
+
+    def test_custom_date_end_is_forwarded(self):
+        """A supplied date_range_end is forwarded to the API call."""
+        t = _make_telescope("Swift", "t1")
+        client = _make_client([t], [])
+        custom_end = datetime(2025, 12, 31)
+
+        get_schedule_history(client=client, date_range_end=custom_end)
+
+        call_kwargs = client.schedule.get_many.call_args.kwargs
+        assert call_kwargs["date_range_end"] == custom_end
+
     def test_naive_date_begin_forwarded_unchanged(self):
         """A naive date_range_begin datetime is forwarded to the API as-is (no UTC coercion)."""
         t = _make_telescope("Swift", "t1")
@@ -527,3 +554,33 @@ class TestPlotScheduleHistory:
         # Two rectangles → two None separators in the x array.
         none_count = sum(1 for v in planned_trace.x if v is None)
         assert none_count == 2
+
+    def test_today_vertical_line_present(self):
+        """A vertical line marking today is present in the figure shapes."""
+        df = _make_history_df(
+            {
+                "telescope_name": "Swift",
+                "telescope_short_name": "Swift",
+                "telescope_id": "t1",
+                "status": "planned",
+                "date_begin": DATE_BEGIN,
+                "date_end": DATE_END,
+                "created_on": NOW,
+            }
+        )
+        fig = plot_schedule_history(df)
+        # add_vline creates a shape of type "line"
+        line_shapes = [s for s in fig.layout.shapes if s.type == "line"]
+        assert len(line_shapes) >= 1
+
+    def test_today_vertical_line_present_empty_df(self):
+        """The today vertical line is also present when the DataFrame is empty."""
+        df = pd.DataFrame(
+            columns=[
+                "telescope_name", "telescope_short_name", "telescope_id",
+                "status", "date_range_begin", "date_range_end", "created_on",
+            ]
+        )
+        fig = plot_schedule_history(df)
+        line_shapes = [s for s in fig.layout.shapes if s.type == "line"]
+        assert len(line_shapes) >= 1
