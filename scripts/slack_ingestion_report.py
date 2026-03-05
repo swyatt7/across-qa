@@ -11,8 +11,12 @@ Actions workflow.  It:
    reports that everything looks good when all checks pass.
 4. Uploads the PNG and posts the message to the configured Slack channel.
 
-Required environment variables
--------------------------------
+Use ``--dry-run`` to skip all Slack calls: the message is printed to stdout
+and the Plotly timeline is shown interactively (``fig.show()``).  No
+environment variables are required in dry-run mode.
+
+Required environment variables (normal mode)
+---------------------------------------------
 SLACK_BOT_TOKEN
     A Slack Bot User OAuth Token (``xoxb-...``) with the following scopes:
     - ``chat:write`` — post messages
@@ -25,13 +29,12 @@ SLACK_CHANNEL_ID
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import tempfile
 
 from across.client import Client
-from slack_sdk import WebClient  # type: ignore
-from slack_sdk.errors import SlackApiError  # type: ignore
 
 from across_qa.checker import check_telescope_ingestion_status
 from across_qa.visualization import plot_ingesetion_status_timeline
@@ -86,26 +89,54 @@ def _build_slack_message(df) -> str:  # type: ignore[type-arg]
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    token = _require_env("SLACK_BOT_TOKEN")
-    channel_id = _require_env("SLACK_CHANNEL_ID")
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Post telescope ingestion status to Slack.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Print the Slack message to stdout and show the Plotly timeline "
+            "interactively instead of sending anything to Slack."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
 
     # 1. Fetch ingestion status
     client = Client()
     df = check_telescope_ingestion_status(client=client)
 
-    # 2. Build Slack message text
+    # 2. Build message text
     message_text = _build_slack_message(df)
 
-    # 3. Export the timeline to a temporary PNG
+    # 3. Generate the timeline figure
+    fig = plot_ingesetion_status_timeline(df)
+
+    if args.dry_run:
+        # Dry-run: print to console and show figure interactively
+        print(message_text)
+        fig.show()
+        return
+
+    # Normal mode: require Slack credentials
+    from slack_sdk import WebClient  # type: ignore
+    from slack_sdk.errors import SlackApiError  # type: ignore
+
+    token = _require_env("SLACK_BOT_TOKEN")
+    channel_id = _require_env("SLACK_CHANNEL_ID")
+
     slack = WebClient(token=token)
 
+    # 4. Export the timeline to a temporary PNG and post to Slack
     with tempfile.TemporaryDirectory() as tmpdir:
         png_path = os.path.join(tmpdir, "ingestion_status.png")
-        fig = plot_ingesetion_status_timeline(df)
         fig.write_image(png_path)
 
-        # 4. Post message + upload PNG to Slack
         try:
             # Post the text message first
             post_resp = slack.chat_postMessage(
