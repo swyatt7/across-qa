@@ -102,10 +102,7 @@ df = get_schedule_history()
 
 # Or narrow to specific telescopes and a custom date range
 from datetime import datetime, timezone
-df = get_schedule_history(
-    telescope_identifiers=["Swift", "Fermi"],
-    date_range_begin=datetime(2026, 1, 1, tzinfo=timezone.utc),
-)
+df = get_schedule_history()
 
 print(df[["telescope_short_name", "status", "date_range_begin", "date_range_end"]])
 
