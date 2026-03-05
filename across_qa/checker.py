@@ -266,7 +266,7 @@ def check_cadence(
         status = Status.LATE
         missed_count = len(ingested_attempts)
         earliest_missed = ingested_attempts[0].strftime("%Y-%m-%dT%H:%M:%SZ")
-        message = f"Ingestion is late. {missed_count} missed attempt(s) since last ingestion. Earliest missed: {earliest_missed}"
+        message = f"Ingestion is late. {missed_count} missed attempt(s) since last ingestion. Earliest missed: {earliest_missed}. Next attempt expected: {next_ingestion_attempt.strftime('%Y-%m-%dT%H:%M:%SZ')}"
     else:
         # All cron runs have been ingested
         status = Status.OK

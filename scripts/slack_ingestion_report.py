@@ -68,19 +68,19 @@ def _build_slack_message(df) -> str:  # type: ignore[type-arg]
     if not missing.empty:
         lines.append("*Missing ingestion tasks* (never ingested):")
         for _, row in missing.iterrows():
-            lines.append(
-                f"  • `{row['telescope_name']}` "
-                f"(status: `{row['schedule_status']}`) — {row['message']}"
-            )
+            lines.extend([
+                f"   • `{row['telescope_name']}` (status: `{row['schedule_status']}`) ",
+                f"      • {row['message']}"
+            ])
 
     late = issues[issues["status"] == "LATE"]
     if not late.empty:
         lines.append("\n*Late ingestion tasks* (missed scheduled runs):")
         for _, row in late.iterrows():
-            lines.append(
-                f"  • `{row['telescope_name']}` "
-                f"(status: `{row['schedule_status']}`) — {row['message']}"
-            )
+            lines.extend([
+                f"   • `{row['telescope_name']}` (status: `{row['schedule_status']}`) ",
+                f"      • {row['message']}"
+            ])
 
     return "\n".join(lines)
 
