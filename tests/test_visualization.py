@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from datetime import datetime, timedelta, timezone
 
-import pandas as pd
-import pytest
+import pandas as pd # type: ignore
+import plotly.graph_objects as go # type: ignore
 
-from across_qa.visualization import plot_timeline, _STATUS_COLORS, _STATUS_ORDER
+from across_qa.visualization import plot_ingesetion_status_timeline, _STATUS_COLORS, _STATUS_ORDER
 
 
 # ---------------------------------------------------------------------------
@@ -38,11 +37,21 @@ def _make_df(*rows: dict) -> pd.DataFrame:
         "schedule_status",
         "cron",
         "last_ingested",
-        "next_expected",
+        "ingested_attempts",
+        "next_ingestion_attempt",
         "status",
         "message",
     ]
-    return pd.DataFrame(list(rows), columns=columns)
+    # Convert old column names to new ones if present
+    converted_rows = []
+    for row in rows:
+        converted = {k: v for k, v in row.items()}
+        if "next_expected" in converted:
+            converted["next_ingestion_attempt"] = converted.pop("next_expected")
+        if "ingested_attempts" not in converted:
+            converted["ingested_attempts"] = []
+        converted_rows.append(converted)
+    return pd.DataFrame(converted_rows, columns=columns)
 
 
 # ---------------------------------------------------------------------------
@@ -50,11 +59,10 @@ def _make_df(*rows: dict) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 class TestPlotTimeline:
-    """Unit tests for :func:`plot_timeline`."""
+    """Unit tests for :func:`plot_ingesetion_status_timeline`."""
 
     def test_returns_figure(self):
-        """plot_timeline should always return a Plotly Figure."""
-        import plotly.graph_objects as go
+        """plot_ingesetion_status_timeline should always return a Plotly Figure."""
 
         df = _make_df(
             {
@@ -69,7 +77,7 @@ class TestPlotTimeline:
                 "message": "All good.",
             }
         )
-        fig = plot_timeline(df)
+        fig = plot_ingesetion_status_timeline(df)
         assert isinstance(fig, go.Figure)
 
     def test_empty_dataframe(self):
@@ -83,7 +91,7 @@ class TestPlotTimeline:
                 "status", "message",
             ]
         )
-        fig = plot_timeline(df)
+        fig = plot_ingesetion_status_timeline(df)
         assert isinstance(fig, go.Figure)
 
     def test_one_trace_per_status(self):
@@ -134,7 +142,7 @@ class TestPlotTimeline:
                 "message": "No cadence.",
             },
         )
-        fig = plot_timeline(df)
+        fig = plot_ingesetion_status_timeline(df)
         trace_names = {t.name for t in fig.data}
         # All four statuses are present in the data; each should have a trace.
         for status in ["OK", "LATE", "MISSING", "NO_CADENCE"]:
@@ -155,7 +163,7 @@ class TestPlotTimeline:
                 "message": "OK",
             }
         )
-        fig = plot_timeline(df)
+        fig = plot_ingesetion_status_timeline(df)
         ok_trace = next(t for t in fig.data if t.name == "OK")
         assert ok_trace.marker.color == _STATUS_COLORS["OK"]
 
@@ -175,7 +183,7 @@ class TestPlotTimeline:
             }
         )
         out = str(tmp_path / "report.html")
-        plot_timeline(df, output_path=out)
+        plot_ingesetion_status_timeline(df, output_path=out)
         assert os.path.exists(out)
         with open(out) as fh:
             content = fh.read()
@@ -198,7 +206,7 @@ class TestPlotTimeline:
         )
         import plotly.graph_objects as go
 
-        fig = plot_timeline(df)
+        fig = plot_ingesetion_status_timeline(df)
         assert isinstance(fig, go.Figure)
 
     def test_figure_has_xaxis_type_date(self):
@@ -216,7 +224,7 @@ class TestPlotTimeline:
                 "message": "OK",
             }
         )
-        fig = plot_timeline(df)
+        fig = plot_ingesetion_status_timeline(df)
         assert fig.layout.xaxis.type == "date"
 
     def test_short_name_used_as_y_axis_label(self):
@@ -234,7 +242,7 @@ class TestPlotTimeline:
                 "message": "OK",
             }
         )
-        fig = plot_timeline(df)
+        fig = plot_ingesetion_status_timeline(df)
         ok_trace = next(t for t in fig.data if t.name == "OK")
         y_labels = list(ok_trace.y)
         assert any("Swift" in str(lbl) for lbl in y_labels)

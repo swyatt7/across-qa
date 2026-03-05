@@ -22,8 +22,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING
 
-import pandas as pd
-from croniter import croniter
+import pandas as pd #type: ignore
+from croniter import croniter  #type: ignore
 
 from across.client import Client
 
@@ -52,7 +52,8 @@ class CadenceResult:
     schedule_status: str
     cron: str | None
     last_ingested: datetime | None
-    next_expected: datetime | None
+    ingested_attempts: list[datetime]
+    next_ingestion_attempt: datetime | None
     status: Status
     message: str
 
@@ -63,14 +64,19 @@ class CadenceResult:
             else "never"
         )
         nxt = (
-            self.next_expected.strftime("%Y-%m-%dT%H:%M:%SZ")
-            if self.next_expected
+            self.next_ingestion_attempt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if self.next_ingestion_attempt
             else "N/A"
         )
+        attempts_str = ", ".join(
+            a.strftime("%Y-%m-%dT%H:%M:%SZ") for a in self.ingested_attempts
+        ) if self.ingested_attempts else "none"
+        
         return (
             f"[{self.status.value:10s}] {self.telescope_name} "
             f"(status={self.schedule_status}, cron={self.cron!r}) "
-            f"last_ingested={last} next_expected={nxt} — {self.message}"
+            f"last_ingested={last} missed_attempts=[{attempts_str}] "
+            f"next_attempt={nxt} — {self.message}"
         )
 
 
@@ -109,7 +115,7 @@ def _fetch_all_schedules(
         return []
 
     try:
-        result = client.schedule.get_many(telescope_ids=telescope_ids)
+        result = client.schedule.get_many(telescope_ids=telescope_ids)  #type: ignore
     except Exception:
         logger.exception(
             "Failed to fetch schedules for telescope_ids=%s", telescope_ids
@@ -170,6 +176,8 @@ def check_cadence(
     Returns
     -------
     CadenceResult
+        Contains last_ingested, ingested_attempts (missed runs), next_ingestion_attempt,
+        and status (NO_CADENCE, OK, LATE, or MISSING).
     """
     if now is None:
         now = _now_utc()
@@ -187,39 +195,17 @@ def check_cadence(
             schedule_status=schedule_status,
             cron=cron,
             last_ingested=last_ingested,
-            next_expected=None,
+            ingested_attempts=[],
+            next_ingestion_attempt=None,
             status=Status.NO_CADENCE,
             message="No cron cadence configured for this telescope/status.",
         )
 
     # ------------------------------------------------------------------ #
-    # No schedule ever ingested
+    # Validate cron expression
     # ------------------------------------------------------------------ #
-    if last_ingested is None:
-        return CadenceResult(
-            telescope_name=telescope_name,
-            telescope_short_name=short_name,
-            telescope_id=telescope_id,
-            schedule_status=schedule_status,
-            cron=cron,
-            last_ingested=None,
-            next_expected=None,
-            status=Status.MISSING,
-            message="No schedule has ever been ingested for this telescope/status.",
-        )
-
-    # ------------------------------------------------------------------ #
-    # Compute when the next schedule was due after the last ingestion
-    # ------------------------------------------------------------------ #
-    # Make sure we work with a timezone-aware datetime throughout.
-    if last_ingested.tzinfo is None:
-        last_ingested = last_ingested.replace(tzinfo=timezone.utc)
-
     try:
-        cron_iter = croniter(cron, last_ingested)
-        next_expected: datetime = cron_iter.get_next(datetime)
-        if next_expected.tzinfo is None:
-            next_expected = next_expected.replace(tzinfo=timezone.utc)
+        cron_iter = croniter(cron, now)
     except Exception:
         logger.exception("Failed to parse cron expression %r", cron)
         return CadenceResult(
@@ -229,26 +215,62 @@ def check_cadence(
             schedule_status=schedule_status,
             cron=cron,
             last_ingested=last_ingested,
-            next_expected=None,
+            ingested_attempts=[],
+            next_ingestion_attempt=None,
             status=Status.NO_CADENCE,
             message=f"Could not parse cron expression {cron!r}.",
         )
 
-    if now >= next_expected:
-        return CadenceResult(
-            telescope_name=telescope_name,
-            telescope_short_name=short_name,
-            telescope_id=telescope_id,
-            schedule_status=schedule_status,
-            cron=cron,
-            last_ingested=last_ingested,
-            next_expected=next_expected,
-            status=Status.LATE,
-            message=(
-                f"Next schedule was expected by {next_expected.strftime('%Y-%m-%dT%H:%M:%SZ')} "
-                f"but none has been ingested yet (now={now.strftime('%Y-%m-%dT%H:%M:%SZ')})."
-            ),
-        )
+    # ------------------------------------------------------------------ #
+    # Calculate next ingestion attempt based on now
+    # ------------------------------------------------------------------ #
+    cron_iter = croniter(cron, now)
+    next_ingestion_attempt: datetime = cron_iter.get_next(datetime)
+    if next_ingestion_attempt.tzinfo is None:
+        next_ingestion_attempt = next_ingestion_attempt.replace(tzinfo=timezone.utc)
+
+    # ------------------------------------------------------------------ #
+    # Calculate missed ingestion attempts (if any)
+    # ------------------------------------------------------------------ #
+    ingested_attempts: list[datetime] = []
+    
+    if last_ingested is not None:
+        # Make timezone-aware if needed
+        if last_ingested.tzinfo is None:
+            last_ingested = last_ingested.replace(tzinfo=timezone.utc)
+        
+        # Find all cron runs between last_ingested and now
+        reference = last_ingested
+        while True:
+            cron_iter = croniter(cron, reference)
+            next_run = cron_iter.get_next(datetime)
+            if next_run.tzinfo is None:
+                next_run = next_run.replace(tzinfo=timezone.utc)
+            
+            # Stop if we've reached or passed now
+            if next_run >= now:
+                break
+            
+            ingested_attempts.append(next_run)
+            reference = next_run
+
+    # ------------------------------------------------------------------ #
+    # Determine status
+    # ------------------------------------------------------------------ #
+    if last_ingested is None:
+        # Never ingested
+        status = Status.MISSING
+        message = f"No schedule has ever been ingested. Next expected by {next_ingestion_attempt.strftime('%Y-%m-%dT%H:%M:%SZ')}."
+    elif ingested_attempts:
+        # There are missed attempts
+        status = Status.LATE
+        missed_count = len(ingested_attempts)
+        earliest_missed = ingested_attempts[0].strftime("%Y-%m-%dT%H:%M:%SZ")
+        message = f"Ingestion is late. {missed_count} missed attempt(s) since last ingestion. Earliest missed: {earliest_missed}"
+    else:
+        # All cron runs have been ingested
+        status = Status.OK
+        message = f"Schedule is up-to-date. Next expected by {next_ingestion_attempt.strftime('%Y-%m-%dT%H:%M:%SZ')}."
 
     return CadenceResult(
         telescope_name=telescope_name,
@@ -257,12 +279,10 @@ def check_cadence(
         schedule_status=schedule_status,
         cron=cron,
         last_ingested=last_ingested,
-        next_expected=next_expected,
-        status=Status.OK,
-        message=(
-            f"Schedule is up-to-date. Next expected by "
-            f"{next_expected.strftime('%Y-%m-%dT%H:%M:%SZ')}."
-        ),
+        ingested_attempts=ingested_attempts,
+        next_ingestion_attempt=next_ingestion_attempt,
+        status=status,
+        message=message,
     )
 
 
@@ -273,13 +293,14 @@ _RESULT_COLUMNS = [
     "schedule_status",
     "cron",
     "last_ingested",
-    "next_expected",
+    "ingested_attempts",
+    "next_ingestion_attempt",
     "status",
     "message",
 ]
 
 
-def check_all_telescopes(
+def check_telescope_ingestion_status(
     client: Client | None = None,
     now: datetime | None = None,
 ) -> pd.DataFrame:
@@ -310,7 +331,8 @@ def check_all_telescopes(
     pd.DataFrame
         One row per (telescope, cadence) pair with columns:
         ``telescope_name``, ``telescope_id``, ``schedule_status``, ``cron``,
-        ``last_ingested``, ``next_expected``, ``status``, ``message``.
+        ``last_ingested``, ``ingested_attempts``, ``next_ingestion_attempt``,
+        ``status``, ``message``.
     """
     if client is None:
         client = Client()
@@ -353,7 +375,8 @@ def check_all_telescopes(
                     schedule_status="",
                     cron=None,
                     last_ingested=None,
-                    next_expected=None,
+                    ingested_attempts=[],
+                    next_ingestion_attempt=None,
                     status=Status.NO_CADENCE,
                     message="Telescope has no schedule cadences configured.",
                 )

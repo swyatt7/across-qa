@@ -10,7 +10,7 @@ import pytest
 from across_qa.checker import (
     CadenceResult,
     Status,
-    check_all_telescopes,
+    check_telescope_ingestion_status,
     check_cadence,
 )
 
@@ -52,8 +52,9 @@ class TestCheckCadence:
             now=NOW,
         )
         assert result.status == Status.OK
-        assert result.next_expected is not None
-        assert result.next_expected > NOW
+        assert result.next_ingestion_attempt is not None
+        assert result.next_ingestion_attempt > NOW
+        assert result.ingested_attempts == []  # No missed attempts
 
     def test_late_when_past_next_expected(self):
         """If the next expected time has passed, status should be LATE."""
@@ -67,8 +68,9 @@ class TestCheckCadence:
             now=NOW,
         )
         assert result.status == Status.LATE
-        assert result.next_expected is not None
-        assert result.next_expected < NOW
+        assert result.next_ingestion_attempt is not None
+        assert result.next_ingestion_attempt > NOW
+        assert len(result.ingested_attempts) > 0  # Should have missed attempts
 
     def test_missing_when_no_schedule_ingested(self):
         """If no schedule has been ingested, status should be MISSING."""
@@ -135,6 +137,8 @@ class TestCheckCadence:
         assert result.schedule_status == "performed"
         assert result.cron == "*/5 * * * *"
         assert result.last_ingested == LAST_30MIN_AGO
+        assert isinstance(result.ingested_attempts, list)
+        assert isinstance(result.next_ingestion_attempt, datetime)
 
     def test_naive_last_ingested_treated_as_utc(self):
         """A naive (tz-unaware) last_ingested datetime should not raise."""
@@ -250,7 +254,7 @@ class TestCheckAllTelescopes:
             schedule_map={("t1", "planned"): [recent_schedule]},
         )
 
-        results = check_all_telescopes(client=client, now=NOW)
+        results = check_telescope_ingestion_status(client=client, now=NOW)
 
         assert len(results) == 1
         assert results.iloc[0]["status"] == "OK"
@@ -266,7 +270,7 @@ class TestCheckAllTelescopes:
             schedule_map={("t2", "planned"): [old_schedule]},
         )
 
-        results = check_all_telescopes(client=client, now=NOW)
+        results = check_telescope_ingestion_status(client=client, now=NOW)
 
         assert len(results) == 1
         assert results.iloc[0]["status"] == "LATE"
@@ -280,7 +284,7 @@ class TestCheckAllTelescopes:
             schedule_map={},
         )
 
-        results = check_all_telescopes(client=client, now=NOW)
+        results = check_telescope_ingestion_status(client=client, now=NOW)
 
         assert len(results) == 1
         assert results.iloc[0]["status"] == "MISSING"
@@ -290,7 +294,7 @@ class TestCheckAllTelescopes:
         telescope = _make_telescope("Hubble", "t4", cadences=[])
         client = self._make_client(telescopes=[telescope])
 
-        results = check_all_telescopes(client=client, now=NOW)
+        results = check_telescope_ingestion_status(client=client, now=NOW)
 
         assert len(results) == 1
         assert results.iloc[0]["status"] == "NO_CADENCE"
@@ -310,7 +314,7 @@ class TestCheckAllTelescopes:
             },
         )
 
-        results = check_all_telescopes(client=client, now=NOW)
+        results = check_telescope_ingestion_status(client=client, now=NOW)
 
         assert len(results) == 2
         statuses = dict(zip(results["schedule_status"], results["status"]))
@@ -331,7 +335,7 @@ class TestCheckAllTelescopes:
             },
         )
 
-        results = check_all_telescopes(client=client, now=NOW)
+        results = check_telescope_ingestion_status(client=client, now=NOW)
 
         assert len(results) == 2
         result_map = dict(zip(results["telescope_name"], results["status"]))
@@ -342,7 +346,7 @@ class TestCheckAllTelescopes:
         """No telescopes → empty DataFrame."""
         client = self._make_client(telescopes=[])
 
-        results = check_all_telescopes(client=client, now=NOW)
+        results = check_telescope_ingestion_status(client=client, now=NOW)
 
         assert results.empty
 
@@ -353,7 +357,7 @@ class TestCheckAllTelescopes:
             mock_client.telescope.get_many.return_value = []
             mock_client_cls.return_value = mock_client
 
-            results = check_all_telescopes(now=NOW)
+            results = check_telescope_ingestion_status(now=NOW)
 
             mock_client_cls.assert_called_once_with()
             assert results.empty
@@ -366,7 +370,7 @@ class TestCheckAllTelescopes:
         t2 = _make_telescope("NuSTAR", "t2", [c2])
         client = self._make_client(telescopes=[t1, t2])
 
-        check_all_telescopes(client=client, now=NOW)
+        check_telescope_ingestion_status(client=client, now=NOW)
 
         assert client.schedule.get_many.call_count == 1
 
@@ -381,6 +385,6 @@ class TestCheckAllTelescopes:
             schedule_map={("t1", "planned"): [older, newer]},
         )
 
-        results = check_all_telescopes(client=client, now=NOW)
+        results = check_telescope_ingestion_status(client=client, now=NOW)
 
         assert results.iloc[0]["status"] == "OK"  # newest is 30 min ago → OK
